@@ -1,14 +1,3 @@
----
-title: SOC Analyst Environment
-emoji: "shield"
-colorFrom: red
-colorTo: blue
-sdk: docker
-app_port: 8000
-tags:
-  - openenv
----
-
 # SOC Analyst Environment
 
 An OpenEnv environment that simulates a **Security Operations Center (SOC) analyst workstation**. AI agents investigate cybersecurity alerts by examining evidence across multiple log sources, querying threat intelligence, correlating events, and making triage decisions with appropriate remediation actions.
