@@ -1,6 +1,6 @@
 ---
 title: SOC Analyst Environment
-emoji: shield
+emoji: "\U0001F6E1"
 colorFrom: red
 colorTo: blue
 sdk: docker
