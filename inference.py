@@ -254,9 +254,9 @@ def run_episode(task_type: str, seed: int = 0) -> float:
 
     llm_client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
-    print(f"\n{'='*60}")
-    print(f"Task: {task_type} (seed={seed})")
-    print(f"{'='*60}")
+    print(f"\n{'='*60}", flush=True)
+    print(f"Task: {task_type} (seed={seed})", flush=True)
+    print(f"{'='*60}", flush=True)
 
     env = SocAnalystEnv(base_url=ENV_URL)
     final_score = 0.0
@@ -267,7 +267,8 @@ def run_episode(task_type: str, seed: int = 0) -> float:
         obs = result.observation
         max_steps = obs.max_steps
 
-        print(f"Initial: {obs.message[:100]}")
+        print(f"[START] task={task_type}", flush=True)
+        print(f"Initial: {obs.message[:100]}", flush=True)
 
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -329,7 +330,7 @@ def run_episode(task_type: str, seed: int = 0) -> float:
                         params = {}
 
                     step_count += 1
-                    print(f"  Step {step_count}: {action_type}({json.dumps(params)[:80]})")
+                    print(f"  Step {step_count}: {action_type}({json.dumps(params)[:80]})", flush=True)
 
                     action = SOCAction(action_type=action_type, params=params)
                     result = env.step(action)
@@ -337,7 +338,8 @@ def run_episode(task_type: str, seed: int = 0) -> float:
                     done = result.done
                     reward = result.reward or 0
 
-                    print(f"    -> reward={reward}, done={done}")
+                    print(f"[STEP] step={step_count} reward={reward}", flush=True)
+                    print(f"    -> reward={reward}, done={done}", flush=True)
 
                     obs_dict = {
                         "message": obs.message,
@@ -366,7 +368,8 @@ def run_episode(task_type: str, seed: int = 0) -> float:
     finally:
         env.close()
 
-    print(f"  Final score: {final_score:.3f}")
+    print(f"[END] task={task_type} score={final_score} steps={step_count}", flush=True)
+    print(f"  Final score: {final_score:.3f}", flush=True)
     return float(final_score)
 
 
@@ -377,15 +380,16 @@ def run_episode_direct(task_type: str, seed: int = 0) -> float:
 
     llm_client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
-    print(f"\n{'='*60}")
-    print(f"Task: {task_type} (seed={seed})")
-    print(f"{'='*60}")
+    print(f"\n{'='*60}", flush=True)
+    print(f"Task: {task_type} (seed={seed})", flush=True)
+    print(f"{'='*60}", flush=True)
 
     env = SocAnalystEnvironment()
     obs = env.reset(task_type=task_type, seed=seed)
     max_steps = obs.max_steps
 
-    print(f"Initial: {obs.message[:100]}")
+    print(f"[START] task={task_type}", flush=True)
+    print(f"Initial: {obs.message[:100]}", flush=True)
 
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -448,14 +452,15 @@ def run_episode_direct(task_type: str, seed: int = 0) -> float:
                     params = {}
 
                 step_count += 1
-                print(f"  Step {step_count}: {action_type}({json.dumps(params)[:80]})")
+                print(f"  Step {step_count}: {action_type}({json.dumps(params)[:80]})", flush=True)
 
                 action = SOCAction(action_type=action_type, params=params)
                 obs = env.step(action)
                 done = obs.done
                 reward = obs.reward or 0
 
-                print(f"    -> reward={reward}, done={done}")
+                print(f"[STEP] step={step_count} reward={reward}", flush=True)
+                print(f"    -> reward={reward}, done={done}", flush=True)
 
                 obs_dict = {
                     "message": obs.message,
@@ -481,7 +486,8 @@ def run_episode_direct(task_type: str, seed: int = 0) -> float:
             })
             step_count += 1
 
-    print(f"  Final score: {final_score:.3f}")
+    print(f"[END] task={task_type} score={final_score} steps={step_count}", flush=True)
+    print(f"  Final score: {final_score:.3f}", flush=True)
     return float(final_score)
 
 
@@ -502,13 +508,13 @@ def main() -> None:
         score = runner(task_type, seed)
         scores[task_type] = score
 
-    print(f"\n{'='*60}")
-    print("BASELINE SCORES")
-    print(f"{'='*60}")
+    print(f"\n{'='*60}", flush=True)
+    print("BASELINE SCORES", flush=True)
+    print(f"{'='*60}", flush=True)
     for task, score in scores.items():
-        print(f"  {task}: {score:.3f}")
+        print(f"  {task}: {score:.3f}", flush=True)
     avg = sum(scores.values()) / len(scores) if scores else 0.0
-    print(f"  average: {avg:.3f}")
+    print(f"  average: {avg:.3f}", flush=True)
 
 
 if __name__ == "__main__":
