@@ -23,8 +23,32 @@ API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Llama-3.3-70B-Instruct")
 
 ENV_URL = os.getenv("SOC_ENV_URL", "http://localhost:8000")
+BENCHMARK = "soc_analyst_env"
 TEMPERATURE = 0.2
 MAX_TOKENS = 1024
+
+
+# --- Structured stdout helpers (hackathon validator format) ---
+
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
+
+
+def log_step(step: int, action: str, reward: float, done: bool, error: str | None) -> None:
+    error_val = error if error else "null"
+    done_val = str(done).lower()
+    print(
+        f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}",
+        flush=True,
+    )
+
+
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(
+        f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
+        flush=True,
+    )
 
 # --- Tool definitions for the LLM ---
 
@@ -254,12 +278,11 @@ def run_episode(task_type: str, seed: int = 0) -> float:
 
     llm_client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
-    print(f"\n{'='*60}", flush=True)
-    print(f"Task: {task_type} (seed={seed})", flush=True)
-    print(f"{'='*60}", flush=True)
-
     env = SocAnalystEnv(base_url=ENV_URL)
     final_score = 0.0
+    rewards: List[float] = []
+    step_count = 0
+    success = False
 
     try:
         env.connect()
@@ -267,8 +290,7 @@ def run_episode(task_type: str, seed: int = 0) -> float:
         obs = result.observation
         max_steps = obs.max_steps
 
-        print(f"[START] task={task_type}", flush=True)
-        print(f"Initial: {obs.message[:100]}", flush=True)
+        log_start(task=task_type, env=BENCHMARK, model=MODEL_NAME)
 
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -286,7 +308,6 @@ def run_episode(task_type: str, seed: int = 0) -> float:
         ]
 
         done = result.done
-        step_count = 0
 
         while not done and step_count < max_steps:
             try:
@@ -300,7 +321,7 @@ def run_episode(task_type: str, seed: int = 0) -> float:
                     stream=False,
                 )
             except Exception as exc:
-                print(f"  LLM error: {exc}")
+                print(f"[DEBUG] LLM error: {exc}", flush=True)
                 break
 
             msg = completion.choices[0].message
@@ -330,16 +351,16 @@ def run_episode(task_type: str, seed: int = 0) -> float:
                         params = {}
 
                     step_count += 1
-                    print(f"  Step {step_count}: {action_type}({json.dumps(params)[:80]})", flush=True)
+                    action_str = f"{action_type}({json.dumps(params)})"
 
                     action = SOCAction(action_type=action_type, params=params)
                     result = env.step(action)
                     obs = result.observation
                     done = result.done
-                    reward = result.reward or 0
+                    reward = result.reward or 0.0
 
-                    print(f"[STEP] step={step_count} reward={reward}", flush=True)
-                    print(f"    -> reward={reward}, done={done}", flush=True)
+                    rewards.append(reward)
+                    log_step(step=step_count, action=action_str, reward=reward, done=done, error=None)
 
                     obs_dict = {
                         "message": obs.message,
@@ -364,12 +385,15 @@ def run_episode(task_type: str, seed: int = 0) -> float:
                     "content": "Use the available tools to investigate. Call a tool now.",
                 })
                 step_count += 1
+                rewards.append(0.0)
+                log_step(step=step_count, action="no_tool_call", reward=0.0, done=False, error=None)
 
     finally:
         env.close()
+        final_score = min(max(final_score, 0.0), 1.0)
+        success = final_score >= 0.1
+        log_end(success=success, steps=step_count, score=final_score, rewards=rewards)
 
-    print(f"[END] task={task_type} score={final_score} steps={step_count}", flush=True)
-    print(f"  Final score: {final_score:.3f}", flush=True)
     return float(final_score)
 
 
@@ -380,16 +404,11 @@ def run_episode_direct(task_type: str, seed: int = 0) -> float:
 
     llm_client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
-    print(f"\n{'='*60}", flush=True)
-    print(f"Task: {task_type} (seed={seed})", flush=True)
-    print(f"{'='*60}", flush=True)
-
     env = SocAnalystEnvironment()
     obs = env.reset(task_type=task_type, seed=seed)
     max_steps = obs.max_steps
 
-    print(f"[START] task={task_type}", flush=True)
-    print(f"Initial: {obs.message[:100]}", flush=True)
+    log_start(task=task_type, env=BENCHMARK, model=MODEL_NAME)
 
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -409,85 +428,93 @@ def run_episode_direct(task_type: str, seed: int = 0) -> float:
     done = obs.done
     step_count = 0
     final_score = 0.0
+    rewards: List[float] = []
+    success = False
 
-    while not done and step_count < max_steps:
-        try:
-            completion = llm_client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=messages,
-                tools=TOOLS,
-                tool_choice="auto",
-                temperature=TEMPERATURE,
-                max_tokens=MAX_TOKENS,
-                stream=False,
-            )
-        except Exception as exc:
-            print(f"  LLM error: {exc}")
-            break
+    try:
+        while not done and step_count < max_steps:
+            try:
+                completion = llm_client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=messages,
+                    tools=TOOLS,
+                    tool_choice="auto",
+                    temperature=TEMPERATURE,
+                    max_tokens=MAX_TOKENS,
+                    stream=False,
+                )
+            except Exception as exc:
+                print(f"[DEBUG] LLM error: {exc}", flush=True)
+                break
 
-        msg = completion.choices[0].message
+            msg = completion.choices[0].message
 
-        if msg.tool_calls:
-            messages.append({
-                "role": "assistant",
-                "content": msg.content,
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in msg.tool_calls
-                ],
-            })
-
-            for tc in msg.tool_calls:
-                action_type = tc.function.name
-                try:
-                    params = json.loads(tc.function.arguments)
-                except json.JSONDecodeError:
-                    params = {}
-
-                step_count += 1
-                print(f"  Step {step_count}: {action_type}({json.dumps(params)[:80]})", flush=True)
-
-                action = SOCAction(action_type=action_type, params=params)
-                obs = env.step(action)
-                done = obs.done
-                reward = obs.reward or 0
-
-                print(f"[STEP] step={step_count} reward={reward}", flush=True)
-                print(f"    -> reward={reward}, done={done}", flush=True)
-
-                obs_dict = {
-                    "message": obs.message,
-                    "data": obs.data,
-                    "step_number": obs.step_number,
-                    "max_steps": obs.max_steps,
-                }
+            if msg.tool_calls:
                 messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": json.dumps(obs_dict),
+                    "role": "assistant",
+                    "content": msg.content,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            },
+                        }
+                        for tc in msg.tool_calls
+                    ],
                 })
 
-                if done:
-                    final_score = obs.data.get("final_score", reward)
-                    break
-        else:
-            if msg.content:
-                messages.append({"role": "assistant", "content": msg.content})
-            messages.append({
-                "role": "user",
-                "content": "Use the available tools to investigate. Call a tool now.",
-            })
-            step_count += 1
+                for tc in msg.tool_calls:
+                    action_type = tc.function.name
+                    try:
+                        params = json.loads(tc.function.arguments)
+                    except json.JSONDecodeError:
+                        params = {}
 
-    print(f"[END] task={task_type} score={final_score} steps={step_count}", flush=True)
-    print(f"  Final score: {final_score:.3f}", flush=True)
+                    step_count += 1
+                    action_str = f"{action_type}({json.dumps(params)})"
+
+                    action = SOCAction(action_type=action_type, params=params)
+                    obs = env.step(action)
+                    done = obs.done
+                    reward = obs.reward or 0.0
+
+                    rewards.append(reward)
+                    log_step(step=step_count, action=action_str, reward=reward, done=done, error=None)
+
+                    obs_dict = {
+                        "message": obs.message,
+                        "data": obs.data,
+                        "step_number": obs.step_number,
+                        "max_steps": obs.max_steps,
+                    }
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": json.dumps(obs_dict),
+                    })
+
+                    if done:
+                        final_score = obs.data.get("final_score", reward)
+                        break
+            else:
+                if msg.content:
+                    messages.append({"role": "assistant", "content": msg.content})
+                messages.append({
+                    "role": "user",
+                    "content": "Use the available tools to investigate. Call a tool now.",
+                })
+                step_count += 1
+                rewards.append(0.0)
+                log_step(step=step_count, action="no_tool_call", reward=0.0, done=False, error=None)
+
+    finally:
+        final_score = min(max(final_score, 0.0), 1.0)
+        success = final_score >= 0.1
+        log_end(success=success, steps=step_count, score=final_score, rewards=rewards)
+
     return float(final_score)
 
 
@@ -508,13 +535,8 @@ def main() -> None:
         score = runner(task_type, seed)
         scores[task_type] = score
 
-    print(f"\n{'='*60}", flush=True)
-    print("BASELINE SCORES", flush=True)
-    print(f"{'='*60}", flush=True)
-    for task, score in scores.items():
-        print(f"  {task}: {score:.3f}", flush=True)
     avg = sum(scores.values()) / len(scores) if scores else 0.0
-    print(f"  average: {avg:.3f}", flush=True)
+    print(f"[DEBUG] BASELINE SCORES: {scores} average={avg:.3f}", flush=True)
 
 
 if __name__ == "__main__":
